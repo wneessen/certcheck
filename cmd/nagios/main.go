@@ -120,12 +120,7 @@ func metrics(metrics *certcheck.Metrics) string {
 		builder.WriteString(fmt.Sprintf("TLS handshake: %s, ", metrics.TLSHandshake))
 	}
 
-	result := builder.String()
-	if strings.HasSuffix(result, ", ") {
-		result = result[:len(result)-2]
-	}
-
-	return result + ")"
+	return strings.TrimSuffix(builder.String(), ", ") + ")"
 }
 
 func fail(err error, results certcheck.Result) {

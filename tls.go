@@ -64,7 +64,7 @@ func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics
 	defer cancel()
 
 	dialer := net.Dialer{}
-	//tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
+	// tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
 	addr := net.JoinHostPort(ip.String(), fmt.Sprintf("%d", c.Config.Port))
 
 	// Connect to host
@@ -83,7 +83,6 @@ func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics
 	// Check for STARTTLS support
 	var connstate tls.ConnectionState
 	var tlsMetrics Metrics
-	timer = time.Now()
 	switch c.Config.StartTLS {
 	case TLSProtoSMTP:
 		connstate, tlsMetrics, err = c.starttlsSMTP(conn)
@@ -147,7 +146,7 @@ func (c *Checker) starttlsSMTP(conn net.Conn) (tls.ConnectionState, Metrics, err
 	}
 	text.EndResponse(id)
 	client := tls.Client(conn, tlsConfig)
-	metrics.TLSHandshake = time.Since(timer)
+	metrics.TLSInit = time.Since(timer)
 
 	if err = client.Handshake(); err != nil {
 		metrics.TLSHandshake = time.Since(timer)
@@ -158,6 +157,9 @@ func (c *Checker) starttlsSMTP(conn net.Conn) (tls.ConnectionState, Metrics, err
 
 	text = textproto.NewConn(client)
 	id, err = text.Cmd("QUIT")
+	if err != nil {
+		return connstate, metrics, fmt.Errorf("failed to send QUIT command to SMTP server: %w", err)
+	}
 	text.StartResponse(id)
 	code, msg, err = text.ReadResponse(221)
 	if err != nil {
