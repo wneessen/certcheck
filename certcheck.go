@@ -9,117 +9,108 @@ import (
 	"time"
 )
 
-const DefaultTimeout = 5 * time.Second
+const (
+	// DefaultTimeout is the default timeout that is used when no specific timeouts are requested
+	DefaultTimeout = time.Second * 5
+	DefaultRetries = 3
+	DefaultPort    = 443
+)
 
+type Config struct {
+	Certname    string
+	ConnTimeout time.Duration
+	DNSTimeout  time.Duration
+	Hostname    string
+	Port        uint
+	DNSRetries  uint
+	StartTLS    STARTTLSProto
+	VerifyCert  bool
+}
 type Checker struct {
-	certname    string
-	connTimeout time.Duration
-	dnsTimeout  time.Duration
-	hostname    string
-	port        uint
-	dnsRetries  uint
-	starttls    STARTTLSProto
-	verify      bool
+	Config Config
 }
-type Status struct {
-	ConnTime   time.Duration
-	DNSLookup  time.Duration
-	Expiration time.Time
-	Status     Severity
+type Metrics struct {
+	ConnTime     time.Duration
+	DNSLookup    time.Duration
+	TLSInit      time.Duration
+	TLSHandshake time.Duration
 }
 
-func (c *Checker) Certname() string {
-	return c.certname
+type Result struct {
+	CertExpire time.Time
+	Metrics    *Metrics
+	Severity   Severity
 }
 
-func (c *Checker) Hostname() string {
-	return c.hostname
-}
-
-func (c *Checker) Port() uint {
-	return c.port
-}
-
-func New(hostname, certname string, port uint, starttls STARTTLSProto, conntimeout, dnstimeout time.Duration,
-	dnsRetries uint, verify bool,
-) *Checker {
-	if conntimeout == 0 {
-		conntimeout = DefaultTimeout
+func New(config Config) *Checker {
+	if config.DNSTimeout == 0 {
+		config.DNSTimeout = DefaultTimeout
 	}
-	if dnstimeout == 0 {
-		dnstimeout = DefaultTimeout
+	if config.ConnTimeout == 0 {
+		config.ConnTimeout = DefaultTimeout
 	}
-	if certname == "" {
-		certname = hostname
+	if config.Port == 0 {
+		config.Port = DefaultPort
 	}
-
-	return &Checker{
-		certname:    certname,
-		connTimeout: conntimeout,
-		dnsTimeout:  dnstimeout,
-		hostname:    hostname,
-		port:        port,
-		dnsRetries:  dnsRetries,
-		starttls:    starttls,
-		verify:      verify,
+	if config.Certname == "" {
+		config.Certname = config.Hostname
 	}
+	return &Checker{Config: config}
 }
 
-func (c *Checker) Check(ctx context.Context) (Status, error) {
+func (c *Checker) Check(ctx context.Context) (Result, error) {
 	var addrs []net.IP
-	var cert *x509.Certificate
-	var connErr error
-	var connTime, dnsLookup time.Duration
 	var dnsFails uint = 1
-	var status Status
+	result := Result{Metrics: &Metrics{}}
 
 	// DNS lookup
 	for {
 		var err error
-		addrs, dnsLookup, err = c.lookupHost(ctx)
+		addrs, err = c.lookupHost(ctx, result.Metrics)
 		if err != nil {
-			if dnsFails < c.dnsRetries {
+			if dnsFails < c.Config.DNSRetries {
 				dnsFails++
 				continue
 			}
-			if dnsFails >= c.dnsRetries {
-				status.Status = SeverityCritical
-				status.DNSLookup = dnsLookup
-				return status, fmt.Errorf("DNS lookup failed after %d retries: %w", c.dnsRetries, err)
+			if dnsFails >= c.Config.DNSRetries {
+				result.Severity = SeverityCritical
+				return result, fmt.Errorf("DNS lookup failed after %d retries: %w", c.Config.DNSRetries, err)
 			}
 		}
 		break
 	}
-	status.DNSLookup = dnsLookup
 	if len(addrs) == 0 {
-		status.Status = SeverityCritical
-		return status, fmt.Errorf("no IP address found for hostname %s", c.hostname)
+		result.Severity = SeverityCritical
+		return result, fmt.Errorf("no IP address found for hostname %s", c.Config.Hostname)
 	}
 	addr := addrs[0]
 
 	// Connect and optionally verify TLS certificate
-	switch c.starttls {
+	var cert *x509.Certificate
+	var err error
+	switch c.Config.StartTLS {
 	case TLSProtoSMTP, TLSProtoIMAP:
+		cert, err = c.checkSTARTTLS(ctx, addr, result.Metrics)
 	default:
-		cert, connTime, connErr = c.checkHTTP(ctx, addr)
+		cert, err = c.checkTLS(ctx, addr, result.Metrics)
 	}
-	status.ConnTime = connTime
-	if connErr != nil {
-		status.Status = SeverityCritical
-		return status, fmt.Errorf("failed to connect to host %s: %w", c.hostname, connErr)
+	if err != nil {
+		result.Severity = SeverityCritical
+		return result, fmt.Errorf("failed to connect to host %s: %w", c.Config.Hostname, err)
 	}
 	if cert == nil {
-		status.Status = SeverityCritical
-		return status, fmt.Errorf("no certificate found for %q on host %s:%d", c.certname, c.hostname, c.port)
+		result.Severity = SeverityCritical
+		return result, fmt.Errorf("no certificate found for %q on host %s:%d", c.Config.Certname, c.Config.Hostname,
+			c.Config.Port)
 	}
-	if c.verify {
-		if err := cert.VerifyHostname(c.certname); err != nil {
-			status.Status = SeverityCritical
-			return status, fmt.Errorf("failed to verify certificate name %q on host %s:%d: %s ", c.certname,
-				c.hostname, c.port, err)
+	if c.Config.VerifyCert {
+		if err := cert.VerifyHostname(c.Config.Certname); err != nil {
+			result.Severity = SeverityCritical
+			return result, fmt.Errorf("failed to verify certificate name %q on host %s:%d: %w", c.Config.Certname,
+				c.Config.Hostname, c.Config.Port, err)
 		}
 	}
 
-	status.Expiration = cert.NotAfter
-	return status, nil
+	result.CertExpire = cert.NotAfter
+	return result, nil
 }
