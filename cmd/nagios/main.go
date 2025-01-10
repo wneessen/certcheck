@@ -68,47 +68,73 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	checker := certcheck.New(hostname, certname, port, starttlsproto, connTimeout, dnsTimeout, retries, verify)
-	status, err := checker.Check(ctx)
+	config := certcheck.Config{
+		Hostname:    hostname,
+		Certname:    certname,
+		Port:        port,
+		StartTLS:    starttlsproto,
+		ConnTimeout: connTimeout,
+		DNSTimeout:  dnsTimeout,
+		DNSRetries:  retries,
+		VerifyCert:  verify,
+	}
+	checker := certcheck.New(config)
+	results, err := checker.Check(ctx)
 	if err != nil {
-		failWithStatus(err, status)
+		fail(err, results)
 	}
 
-	expDays := status.Expiration.Sub(time.Now()).Hours() / 24
-	const format = "OK: Certificate for %q on host %s:%d still valid. Expiration in %.1f days (DNS lookup: %s, " +
-		"Connect time: %s)\n"
-	fmt.Printf(format, checker.Certname(), checker.Hostname(), checker.Port(), expDays,
-		status.DNSLookup.String(), status.ConnTime.String())
+	expDays := time.Until(results.CertExpire).Hours() / 24
+	if expDays < float64(crit) {
+		results.Severity = certcheck.SeverityCritical
+		err = fmt.Errorf("certificate %q on host %s:%d about to expire in %.1f day(s)", checker.Config.Certname,
+			checker.Config.Hostname, checker.Config.Port, expDays)
+		fail(err, results)
+	}
+	if expDays < float64(warn) {
+		results.Severity = certcheck.SeverityWarning
+		err = fmt.Errorf("certificate %q on host %s:%d about to expire in %.1f day(s)", checker.Config.Certname,
+			checker.Config.Hostname, checker.Config.Port, expDays)
+		fail(err, results)
+	}
+
+	fmt.Printf("OK: certificate for %q on host %s:%d still valid, certificate will expire in %.1f days %s\n",
+		checker.Config.Certname, checker.Config.Hostname, checker.Config.Port, expDays, metrics(results.Metrics))
 	os.Exit(0)
 }
 
-func failWithStatus(err error, status certcheck.Status) {
-	builder := strings.Builder{}
-	builder.WriteString(fmt.Sprintf("%s", err))
-	if status.DNSLookup > 0 || status.ConnTime > 0 {
-		builder.WriteString(` (`)
+func metrics(metrics *certcheck.Metrics) string {
+	var builder strings.Builder
+	builder.WriteString("(")
+
+	if metrics.DNSLookup != 0 {
+		builder.WriteString(fmt.Sprintf("DNS lookup: %s, ", metrics.DNSLookup))
 	}
-	if status.DNSLookup > 0 {
-		builder.WriteString("DNS lookup: ")
-		builder.WriteString(status.DNSLookup.String())
+	if metrics.ConnTime != 0 {
+		builder.WriteString(fmt.Sprintf("Connect time: %s, ", metrics.ConnTime))
 	}
-	if status.ConnTime > 0 {
-		if status.DNSLookup > 0 {
-			builder.WriteString(", ")
-		}
-		builder.WriteString("Connect time: ")
-		builder.WriteString(status.ConnTime.String())
+	if metrics.TLSInit != 0 {
+		builder.WriteString(fmt.Sprintf("TLS init: %s, ", metrics.TLSInit))
 	}
-	if status.DNSLookup > 0 || status.ConnTime > 0 {
-		builder.WriteString(`)`)
+	if metrics.TLSHandshake != 0 {
+		builder.WriteString(fmt.Sprintf("TLS handshake: %s, ", metrics.TLSHandshake))
 	}
 
-	switch status.Status {
+	result := builder.String()
+	if strings.HasSuffix(result, ", ") {
+		result = result[:len(result)-2]
+	}
+
+	return result + ")"
+}
+
+func fail(err error, results certcheck.Result) {
+	switch results.Severity {
 	case certcheck.SeverityWarning:
-		fmt.Printf("WARNING: %s\n", builder.String())
+		fmt.Printf("WARNING: %s %s\n", err, metrics(results.Metrics))
 		os.Exit(1)
 	case certcheck.SeverityCritical:
-		fmt.Printf("CRITICAL: %s\n", builder.String())
+		fmt.Printf("CRITICAL: %s %s\n", err, metrics(results.Metrics))
 		os.Exit(2)
 	default:
 	}
@@ -128,8 +154,8 @@ Flags:
 	-w <WARNING DAYS>		Number of days left of the certificate validity that triggers a WARANING alert
 	-p <PORT>				Port to connect to (Default: 443)
 	-s <STARTTLS PROTOCOL>	Use STARTTLS protocol instead of HTTPS (Supported protocols: smtp, imap)
-	-t <CONNECTION TIMEOUT>	Timeout for connecting to the server (Default: 2s)
-	-i <DNS TIMEOUT>		Timeout for resolving the IPs of the hostname (Default: 2s)
+	-t <CONNECTION TIMEOUT>	Timeout for connecting to the server (Default: 5s)
+	-i <DNS TIMEOUT>		Timeout for resolving the IPs of the hostname (Default: 5s)
 	-r <DNS RETRIES>		Number of re-tries if a DNS resolution fails (Default: 3)
 	-m						Verify that certificate name matches the certificate
 	-n <CERTIFICATE NAME>	Check for a different certificate name then the hostname (Default: <HOSTNAME>)`
