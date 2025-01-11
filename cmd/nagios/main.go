@@ -17,19 +17,6 @@ import (
 // the provided configuration. It evaluates the certificate's expiration against warning and critical thresholds
 // and reports the result with appropriate severity.
 //
-// Supported Flags:
-//
-//	-h: Hostname of the server to check (required).
-//	-p: Port to connect to (default: 443).
-//	-w: Warning threshold in days for certificate expiration (default: 5).
-//	-c: Critical threshold in days for certificate expiration (default: 1).
-//	-s: STARTTLS protocol to use (optional: "ftp", "imap", "smtp").
-//	-t: Connection timeout (default: inherited from config).
-//	-i: DNS lookup timeout (default: inherited from config).
-//	-r: Number of DNS retries (default: 3).
-//	-m: Verify the certificate against the hostname (default: false).
-//	-n: Name of the certificate to verify (default: hostname).
-//
 // Steps:
 //  1. Parse and validate command-line flags.
 //  2. Create a certificate checker configuration.
