@@ -13,8 +13,18 @@ import (
 	"time"
 )
 
+// STARTTLSProto represents the type of STARTTLS protocol to be used during the certificate check.
+//
+// This type is an integer-based enumeration for different STARTTLS-supported protocols, such as SMTP, IMAP, or FTP.
 type STARTTLSProto int
 
+// STARTTLS protocol types for use in the certificate check.
+//
+// Constants:
+//   - TLSProtoNone: No STARTTLS protocol is used.
+//   - TLSProtoSMTP: STARTTLS for the SMTP protocol.
+//   - TLSProtoIMAP: STARTTLS for the IMAP protocol.
+//   - TLSProtoFTP: STARTTLS for the FTP protocol.
 const (
 	TLSProtoNone STARTTLSProto = iota
 	TLSProtoSMTP
@@ -22,6 +32,22 @@ const (
 	TLSProtoFTP
 )
 
+// checkTLS establishes a TLS connection to the specified IP address and retrieves the server's certificate.
+//
+// This function uses a context with a configurable timeout to perform the following steps:
+//  1. Establish a TCP connection to the host.
+//  2. Initialize a TLS client with a specified configuration.
+//  3. Perform a TLS handshake to retrieve the server's certificate.
+//  4. Record performance metrics for connection establishment, TLS initialization, and the handshake.
+//
+// Parameters:
+//   - ctx: A context.Context to manage the connection timeout.
+//   - ip: The IP address of the host to connect to.
+//   - metrics: A pointer to a Metrics struct to record timing information.
+//
+// Returns:
+//   - A pointer to the first x509.Certificate from the server.
+//   - An error if any step (connection, TLS initialization, or handshake) fails.
 func (c *Checker) checkTLS(ctx context.Context, ip net.IP, metrics *Metrics) (*x509.Certificate, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.Config.ConnTimeout)
 	defer cancel()
@@ -61,6 +87,26 @@ func (c *Checker) checkTLS(ctx context.Context, ip net.IP, metrics *Metrics) (*x
 	return connstate.PeerCertificates[0], nil
 }
 
+// checkSTARTTLS establishes a TCP connection to the specified IP address and performs a STARTTLS handshake.
+//
+// This function uses a context with a configurable timeout to connect to the host, initiate STARTTLS,
+// and retrieve the server's certificate. The appropriate STARTTLS protocol (FTP, IMAP, or SMTP) is
+// determined by the configuration.
+//
+// Steps:
+//  1. Establish a TCP connection to the host.
+//  2. Initiate a STARTTLS handshake based on the specified protocol.
+//  3. Retrieve the server's TLS certificate after the handshake.
+//  4. Record performance metrics for connection establishment, TLS initialization, and the handshake.
+//
+// Parameters:
+//   - ctx: A context.Context to manage the connection timeout.
+//   - ip: The IP address of the host to connect to.
+//   - metrics: A pointer to a Metrics struct to record timing information.
+//
+// Returns:
+//   - A pointer to the first x509.Certificate from the server.
+//   - An error if any step (connection, STARTTLS handshake, or certificate retrieval) fails.
 func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics) (*x509.Certificate, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.Config.ConnTimeout)
 	defer cancel()
@@ -106,6 +152,26 @@ func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics
 	return connstate.PeerCertificates[0], nil
 }
 
+// starttlsSMTP performs a STARTTLS handshake with an SMTP server.
+//
+// This function establishes a connection to an SMTP server, issues an EHLO command, verifies STARTTLS
+// support, initiates the STARTTLS handshake, and completes the TLS handshake to secure the connection.
+// It records performance metrics for initialization and handshake stages.
+//
+// Steps:
+//  1. Read the initial SMTP 220 response.
+//  2. Send the EHLO command and verify that the server supports STARTTLS.
+//  3. Send the STARTTLS command and initialize the TLS client.
+//  4. Perform the TLS handshake and retrieve the connection state.
+//  5. Optionally, send a QUIT command to properly terminate the SMTP session.
+//
+// Parameters:
+//   - conn: The established TCP connection to the SMTP server.
+//
+// Returns:
+//   - tls.ConnectionState: The TLS connection state containing details like peer certificates.
+//   - Metrics: Performance metrics for the TLS initialization and handshake.
+//   - An error if any step in the SMTP communication or STARTTLS handshake fails.
 func (c *Checker) starttlsSMTP(conn net.Conn) (tls.ConnectionState, Metrics, error) {
 	connstate := tls.ConnectionState{}
 	metrics := Metrics{}
@@ -176,6 +242,26 @@ func (c *Checker) starttlsSMTP(conn net.Conn) (tls.ConnectionState, Metrics, err
 	return connstate, metrics, nil
 }
 
+// starttlsIMAP performs a STARTTLS handshake with an IMAP server.
+//
+// This function establishes a connection to an IMAP server, issues a CAPABILITY command to check for
+// STARTTLS support, initiates the STARTTLS handshake, and completes the TLS handshake to secure the
+// connection. It records performance metrics for initialization and handshake stages.
+//
+// Steps:
+//  1. Read the initial IMAP "* OK" greeting.
+//  2. Send the CAPABILITY command and verify that the server supports STARTTLS.
+//  3. Send the STARTTLS command to initiate the TLS handshake.
+//  4. Perform the TLS handshake and retrieve the connection state.
+//  5. Optionally, send a LOGOUT command to properly terminate the IMAP session.
+//
+// Parameters:
+//   - conn: The established TCP connection to the IMAP server.
+//
+// Returns:
+//   - tls.ConnectionState: The TLS connection state containing details like peer certificates.
+//   - Metrics: Performance metrics for the TLS initialization and handshake.
+//   - An error if any step in the IMAP communication or STARTTLS handshake fails.
 func (c *Checker) starttlsIMAP(conn net.Conn) (tls.ConnectionState, Metrics, error) {
 	connstate := tls.ConnectionState{}
 	metrics := Metrics{}
@@ -254,6 +340,26 @@ func (c *Checker) starttlsIMAP(conn net.Conn) (tls.ConnectionState, Metrics, err
 	return connstate, metrics, nil
 }
 
+// starttlsFTP performs a STARTTLS handshake with an FTP server.
+//
+// This function establishes a connection to an FTP server, sends the `AUTH TLS` command to initiate
+// STARTTLS, and completes the TLS handshake to secure the connection. It records performance metrics
+// for initialization and handshake stages.
+//
+// Steps:
+//  1. Read the initial FTP 220 response.
+//  2. Send the `AUTH TLS` command and verify a 234 response.
+//  3. Initialize a TLS client and perform the TLS handshake.
+//  4. Retrieve the connection state after the handshake.
+//  5. Optionally, send a `QUIT` command to properly terminate the FTP session.
+//
+// Parameters:
+//   - conn: The established TCP connection to the FTP server.
+//
+// Returns:
+//   - tls.ConnectionState: The TLS connection state containing details like peer certificates.
+//   - Metrics: Performance metrics for the TLS initialization and handshake.
+//   - An error if any step in the FTP communication or STARTTLS handshake fails.
 func (c *Checker) starttlsFTP(conn net.Conn) (tls.ConnectionState, Metrics, error) {
 	connstate := tls.ConnectionState{}
 	metrics := Metrics{}
