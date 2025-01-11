@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: Winni Neessen <wn@neessen.dev>
+#
+# SPDX-License-Identifier: MIT
+
+version: 2
+
+before:
+  hooks:
+    - go test -cover -race -shuffle=on 
+    - go mod tidy
+    - go mod download
+    - go mod verify
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    goos:
+    - linux
+    - freebsd
+    - netbsd
+    goarch:
+      - arm64
+      - amd64
+    main: ./cmd/nagios
+    binary: checkcert
+    ldflags:
+      - -w -s -extldflags "-static"
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+changelog:
+  use: github-native
+
+nfpms:
+  - vendor: Winni Neessen
+    homepage: https://github.com/wneessen/checkcert
+    maintainer: Winni Neessen <wn@neessen.dev>
+    description: |-
+      A Nagios plugin to check certificate validity
+    license: MIT
+    formats:
+      - apk
+      - deb
+      - rpm
+      - termux.deb
+      - archlinux
+    file_name_template: >-
+      {{- trimsuffix .ConventionalFileName .ConventionalExtension -}}
+      {{- if and (eq .Arm "6") (eq .ConventionalExtension ".deb") }}6{{ end -}}
+      {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
+      {{- .ConventionalExtension -}}
+
+dmg:
+  - replace: false
+
+universal_binaries:
+  - replace: false
+
+report_sizes: true
+
+sboms:
+  - artifacts: archive
+
+github_urls:
+
+gomod:
+  mod: mod

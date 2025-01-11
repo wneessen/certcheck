@@ -62,3 +62,7 @@ coverage.html
 
 ## Executables
 certcheck
+
+## goreleaser files
+.env
+dist/
