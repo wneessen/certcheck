@@ -16,7 +16,7 @@ func main() {
 	var crit, warn uint
 	var connTimeout, dnsTimeout time.Duration
 	var retries, port uint
-	var starttlsproto = certcheck.TLSProtoNone
+	starttlsproto := certcheck.TLSProtoNone
 	var verify bool
 
 	flag.StringVar(&hostname, "h", "", "")
