@@ -106,6 +106,9 @@ func New(config Config) *Checker {
 	if config.Certname == "" {
 		config.Certname = config.Hostname
 	}
+	if config.DNSRetries == 0 {
+		config.DNSRetries = DefaultRetries
+	}
 	return &Checker{Config: config}
 }
 

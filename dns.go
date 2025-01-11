@@ -30,9 +30,10 @@ func (c *Checker) lookupHost(ctx context.Context, metrics *Metrics) ([]net.IP, e
 	ctx, cancel := context.WithTimeout(ctx, c.Config.DNSTimeout)
 	defer cancel()
 	resolver := net.DefaultResolver
+	resolver.PreferGo = true
 
 	timer := time.Now()
-	addrs, err := resolver.LookupIP(ctx, "ip4", c.Config.Hostname)
+	addrs, err := resolver.LookupIP(ctx, "ip", c.Config.Hostname)
 	metrics.DNSLookup = time.Since(timer)
 	if err != nil {
 		return nil, fmt.Errorf("failed to lookup IP(s) for host %s: %w", c.Config.Hostname, err)

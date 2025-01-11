@@ -37,7 +37,8 @@ func main() {
 	var certname, hostname, starttls string
 	var crit, warn uint
 	var connTimeout, dnsTimeout time.Duration
-	var retries, port uint
+	var retries uint
+	var port uint
 	starttlsproto := certcheck.TLSProtoNone
 	var verify bool
 
@@ -48,7 +49,7 @@ func main() {
 	flag.StringVar(&starttls, "s", "", "")
 	flag.DurationVar(&connTimeout, "t", 0, "")
 	flag.DurationVar(&dnsTimeout, "i", 0, "")
-	flag.UintVar(&retries, "r", 3, "")
+	flag.UintVar(&retries, "r", 0, "")
 	flag.BoolVar(&verify, "m", false, "")
 	flag.StringVar(&certname, "n", "", "")
 	flag.Usage = usage
