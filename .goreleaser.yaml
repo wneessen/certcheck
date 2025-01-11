@@ -54,16 +54,7 @@ nfpms:
       {{- if not (eq .Amd64 "v1")}}{{ .Amd64 }}{{ end -}}
       {{- .ConventionalExtension -}}
 
-dmg:
-  - replace: false
-
-universal_binaries:
-  - replace: false
-
 report_sizes: true
-
-sboms:
-  - artifacts: archive
 
 github_urls:
 
