@@ -64,7 +64,6 @@ func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics
 	defer cancel()
 
 	dialer := net.Dialer{}
-	// tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
 	addr := net.JoinHostPort(ip.String(), fmt.Sprintf("%d", c.Config.Port))
 
 	// Connect to host
@@ -86,6 +85,8 @@ func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics
 	switch c.Config.StartTLS {
 	case TLSProtoSMTP:
 		connstate, tlsMetrics, err = c.starttlsSMTP(conn)
+	case TLSProtoIMAP:
+		connstate, tlsMetrics, err = c.starttlsIMAP(conn)
 	default:
 	}
 	metrics.TLSInit = tlsMetrics.TLSInit
@@ -166,6 +167,86 @@ func (c *Checker) starttlsSMTP(conn net.Conn) (tls.ConnectionState, Metrics, err
 		return connstate, metrics, fmt.Errorf("unexpected respsonse to QUIT command from SMTP server: %d %s", code, msg)
 	}
 	text.EndResponse(id)
+
+	return connstate, metrics, nil
+}
+
+func (c *Checker) starttlsIMAP(conn net.Conn) (tls.ConnectionState, Metrics, error) {
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
+	metrics := Metrics{}
+	connstate := tls.ConnectionState{}
+	var err error
+
+	timer := time.Now()
+	text := textproto.NewConn(conn)
+	msg, err := text.ReadLine()
+	if err != nil || !strings.HasPrefix(msg, "* OK") {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("expected IMAP server to respond with OK status, got: %w", err)
+	}
+	id, err := text.Cmd("A001 CAPABILITY")
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("failed to send CAPABILITY command to IMAP server: %w", err)
+	}
+	text.StartResponse(id)
+	msg, err = text.ReadLine()
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to CAPABILITY command from IMAP server: %s", msg)
+	}
+	okmsg, err := text.ReadLine()
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to CAPABILITY command from IMAP server: %s", msg)
+	}
+	text.EndResponse(id)
+	if !strings.HasPrefix(okmsg, "A001 OK") || !strings.Contains(msg, "STARTTLS") {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to CAPABILITY command from IMAP server: %s", okmsg)
+	}
+
+	id, err = text.Cmd("A002 STARTTLS")
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("failed to send STARTTLS command to IMAP server: %w", err)
+	}
+	text.StartResponse(id)
+	msg, err = text.ReadLine()
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to STARTTLS command from IMAP server: %s", msg)
+	}
+	text.EndResponse(id)
+	if !strings.HasPrefix(msg, "A002 OK") {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to STARTTLS command from IMAP server: %s", msg)
+	}
+
+	client := tls.Client(conn, tlsConfig)
+	metrics.TLSInit = time.Since(timer)
+
+	if err = client.Handshake(); err != nil {
+		metrics.TLSHandshake = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("failed to perform TLS handshake with host: %w", err)
+	}
+	metrics.TLSHandshake = time.Since(timer)
+	connstate = client.ConnectionState()
+
+	text = textproto.NewConn(client)
+	id, err = text.Cmd("A003 LOGOUT")
+	if err != nil {
+		return connstate, metrics, fmt.Errorf("failed to send LOGOUT command to IMAP server: %w", err)
+	}
+	text.StartResponse(id)
+	msg, err = text.ReadLine()
+	if err != nil {
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to LOGOUT command from IMAP server: %s", msg)
+	}
+	text.EndResponse(id)
+	if !strings.HasPrefix(msg, "* BYE") {
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to LOGOUT command from IMAP server: %s", msg)
+	}
 
 	return connstate, metrics, nil
 }
