@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"errors"
 	"fmt"
 	"net"
 	"net/textproto"
@@ -18,6 +19,7 @@ const (
 	TLSProtoNone STARTTLSProto = iota
 	TLSProtoSMTP
 	TLSProtoIMAP
+	TLSProtoFTP
 )
 
 func (c *Checker) checkTLS(ctx context.Context, ip net.IP, metrics *Metrics) (*x509.Certificate, error) {
@@ -83,11 +85,14 @@ func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics
 	var connstate tls.ConnectionState
 	var tlsMetrics Metrics
 	switch c.Config.StartTLS {
-	case TLSProtoSMTP:
-		connstate, tlsMetrics, err = c.starttlsSMTP(conn)
+	case TLSProtoFTP:
+		connstate, tlsMetrics, err = c.starttlsFTP(conn)
 	case TLSProtoIMAP:
 		connstate, tlsMetrics, err = c.starttlsIMAP(conn)
+	case TLSProtoSMTP:
+		connstate, tlsMetrics, err = c.starttlsSMTP(conn)
 	default:
+		return nil, errors.New("unsupported STARTTLS protocol specified")
 	}
 	metrics.TLSInit = tlsMetrics.TLSInit
 	metrics.TLSHandshake = tlsMetrics.TLSHandshake
@@ -102,13 +107,13 @@ func (c *Checker) checkSTARTTLS(ctx context.Context, ip net.IP, metrics *Metrics
 }
 
 func (c *Checker) starttlsSMTP(conn net.Conn) (tls.ConnectionState, Metrics, error) {
+	connstate := tls.ConnectionState{}
+	metrics := Metrics{}
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
 	hostname, err := os.Hostname()
 	if err != nil {
 		hostname = "localhost"
 	}
-	tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
-	metrics := Metrics{}
-	connstate := tls.ConnectionState{}
 
 	timer := time.Now()
 	text := textproto.NewConn(conn)
@@ -172,10 +177,9 @@ func (c *Checker) starttlsSMTP(conn net.Conn) (tls.ConnectionState, Metrics, err
 }
 
 func (c *Checker) starttlsIMAP(conn net.Conn) (tls.ConnectionState, Metrics, error) {
-	tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
-	metrics := Metrics{}
 	connstate := tls.ConnectionState{}
-	var err error
+	metrics := Metrics{}
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
 
 	timer := time.Now()
 	text := textproto.NewConn(conn)
@@ -222,7 +226,6 @@ func (c *Checker) starttlsIMAP(conn net.Conn) (tls.ConnectionState, Metrics, err
 		metrics.TLSInit = time.Since(timer)
 		return connstate, metrics, fmt.Errorf("unexpected respsonse to STARTTLS command from IMAP server: %s", msg)
 	}
-
 	client := tls.Client(conn, tlsConfig)
 	metrics.TLSInit = time.Since(timer)
 
@@ -247,6 +250,55 @@ func (c *Checker) starttlsIMAP(conn net.Conn) (tls.ConnectionState, Metrics, err
 	if !strings.HasPrefix(msg, "* BYE") {
 		return connstate, metrics, fmt.Errorf("unexpected respsonse to LOGOUT command from IMAP server: %s", msg)
 	}
+
+	return connstate, metrics, nil
+}
+
+func (c *Checker) starttlsFTP(conn net.Conn) (tls.ConnectionState, Metrics, error) {
+	connstate := tls.ConnectionState{}
+	metrics := Metrics{}
+	tlsConfig := &tls.Config{InsecureSkipVerify: true, ServerName: c.Config.Certname}
+
+	timer := time.Now()
+	text := textproto.NewConn(conn)
+	_, _, err := text.ReadResponse(220)
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("expected FTP server to respond with 220 status, got: %w", err)
+	}
+	id, err := text.Cmd("AUTH TLS")
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("failed to send AUTH TLS command to FTP server: %w", err)
+	}
+	text.StartResponse(id)
+	code, msg, err := text.ReadResponse(234)
+	if err != nil {
+		metrics.TLSInit = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to AUTH TLS from FTP server: %d %s", code, msg)
+	}
+	text.EndResponse(id)
+	client := tls.Client(conn, tlsConfig)
+	metrics.TLSInit = time.Since(timer)
+
+	if err = client.Handshake(); err != nil {
+		metrics.TLSHandshake = time.Since(timer)
+		return connstate, metrics, fmt.Errorf("failed to perform TLS handshake with host: %w", err)
+	}
+	metrics.TLSHandshake = time.Since(timer)
+	connstate = client.ConnectionState()
+
+	text = textproto.NewConn(client)
+	id, err = text.Cmd("QUIT")
+	if err != nil {
+		return connstate, metrics, fmt.Errorf("failed to send QUIT command to FTP server: %w", err)
+	}
+	text.StartResponse(id)
+	code, msg, err = text.ReadResponse(221)
+	if err != nil {
+		return connstate, metrics, fmt.Errorf("unexpected respsonse to QUIT command from FTP server: %d %s", code, msg)
+	}
+	text.EndResponse(id)
 
 	return connstate, metrics, nil
 }

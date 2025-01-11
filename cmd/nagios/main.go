@@ -16,7 +16,7 @@ func main() {
 	var crit, warn uint
 	var connTimeout, dnsTimeout time.Duration
 	var retries, port uint
-	var starttlsproto certcheck.STARTTLSProto
+	var starttlsproto = certcheck.TLSProtoNone
 	var verify bool
 
 	flag.StringVar(&hostname, "h", "", "")
@@ -54,10 +54,12 @@ func main() {
 	}
 	if starttls != "" {
 		switch strings.ToLower(starttls) {
-		case "smtp":
-			starttlsproto = certcheck.TLSProtoSMTP
+		case "ftp":
+			starttlsproto = certcheck.TLSProtoFTP
 		case "imap":
 			starttlsproto = certcheck.TLSProtoIMAP
+		case "smtp":
+			starttlsproto = certcheck.TLSProtoSMTP
 		default:
 			_, _ = os.Stderr.WriteString("Unsupported STARTTLS protocol\n")
 			usage()

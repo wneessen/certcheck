@@ -89,7 +89,7 @@ func (c *Checker) Check(ctx context.Context) (Result, error) {
 	var cert *x509.Certificate
 	var err error
 	switch c.Config.StartTLS {
-	case TLSProtoSMTP, TLSProtoIMAP:
+	case TLSProtoFTP, TLSProtoIMAP, TLSProtoSMTP:
 		cert, err = c.checkSTARTTLS(ctx, addr, result.Metrics)
 	default:
 		cert, err = c.checkTLS(ctx, addr, result.Metrics)
