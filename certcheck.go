@@ -28,6 +28,14 @@ const (
 	DefaultPort = 443
 )
 
+// Checker represents a certificate checker instance.
+//
+// Fields:
+//   - Config: The configuration settings used for the certificate check.
+type Checker struct {
+	Config Config
+}
+
 // Config holds the configuration settings for a certificate check.
 //
 // Fields:
@@ -48,14 +56,6 @@ type Config struct {
 	DNSRetries  uint
 	StartTLS    STARTTLSProto
 	VerifyCert  bool
-}
-
-// Checker represents a certificate checker instance.
-//
-// Fields:
-//   - Config: The configuration settings used for the certificate check.
-type Checker struct {
-	Config Config
 }
 
 // Metrics captures performance metrics for various stages of a certificate check.
@@ -79,6 +79,7 @@ type Metrics struct {
 //   - Metrics: A pointer to the Metrics structure containing performance data for the check.
 //   - Severity: The severity level of the result, indicating the status or issues detected.
 type Result struct {
+	Addresses  []net.IP
 	CertExpire time.Time
 	Metrics    *Metrics
 	Severity   Severity
@@ -137,6 +138,9 @@ func (c *Checker) Check(ctx context.Context) (Result, error) {
 	if c.Config.Hostname == "" {
 		return Result{}, fmt.Errorf("hostname is required")
 	}
+	if ctx == nil {
+		return Result{}, fmt.Errorf("context must not be nil")
+	}
 
 	var addrs []net.IP
 	var dnsFails uint = 1
@@ -163,6 +167,7 @@ func (c *Checker) Check(ctx context.Context) (Result, error) {
 		return result, fmt.Errorf("no IP address found for hostname %s", c.Config.Hostname)
 	}
 	addr := addrs[0]
+	result.Addresses = addrs
 
 	// Connect and optionally verify TLS certificate
 	var cert *x509.Certificate
