@@ -25,10 +25,10 @@ import (
 )
 
 // PortAdder is an atomic counter used to increment port numbers for the test SMTP server instances.
-var PortAdder atomic.Int32
+var PortAdder atomic.Uint32
 
 // TestServerPortBase is the base port for the test server
-var TestServerPortBase int32 = 20443
+var TestServerPortBase uint32 = 20443
 
 func TestNew(t *testing.T) {
 	t.Run("New with defaults", func(t *testing.T) {
@@ -80,15 +80,26 @@ func TestNew(t *testing.T) {
 
 func TestCheck(t *testing.T) {
 	t.Run("Check with valid hostname", func(t *testing.T) {
-		checker, ip := defaultChecker(t)
+		props, err := testServerProps(t, false, 0)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		go func() {
+			if err := testHTTPserver(t, props); err != nil {
+				t.Errorf("failed to start test HTTP server: %s", err)
+				return
+			}
+		}()
+		time.Sleep(time.Millisecond * 30)
+
+		checker := defaultChecker(t, props.ListenPort)
 		result, err := checker.Check(context.Background())
 		if err != nil {
 			t.Fatalf("failed to check certificate: %s", err)
 		}
-		if result.Addresses[0].String() != ip.String() {
-			t.Errorf("expected IP address to be %s, got %s", ip, result.Addresses[0])
+		if !result.Addresses[0].IsLoopback() {
+			t.Errorf("expected IP address to be loopback, got %s", result.Addresses[0])
 		}
-
 	})
 	t.Run("Check with empty hostname", func(t *testing.T) {
 		config := Config{}
@@ -128,31 +139,13 @@ func TestCheck(t *testing.T) {
 	})
 }
 
-func TestGenCert(t *testing.T) {
-	props, err := testServerProps(t, false, 0)
-	if err != nil {
-		t.Fatalf("failed to get test server properties: %s", err)
-	}
-	go func() {
-		if err := testHTTPserver(t, props); err != nil {
-			t.Errorf("failed to start test HTTP server: %s", err)
-			return
-		}
-	}()
-	time.Sleep(time.Millisecond * 30)
-	t.Log("Port", props.ListenPort)
-	time.Sleep(time.Minute * 500)
-}
-
 // defaultChecker is a test helper method that returns a Checker and a matching IP address for
 // the configured hostname
-func defaultChecker(t *testing.T) (*Checker, net.IP) {
+func defaultChecker(t *testing.T, port uint) *Checker {
 	t.Helper()
-	hostname := "web.neessen.cloud"
-	ip := net.ParseIP("49.12.112.91")
-	config := Config{Hostname: hostname, Port: 443}
+	config := Config{Hostname: "localhost", Port: port}
 	checker := New(config)
-	return checker, ip
+	return checker
 }
 
 // genTestCert is a test helper method to generate certificates for test servers
