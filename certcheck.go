@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: Winni Neessen <wn@neessen.dev>
+//
+// SPDX-License-Identifier: MIT
+
 // Package certcheck implements a certificate checker.
 //
 // This package provides functionality to perform certificate validation and connection diagnostics,
