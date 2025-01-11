@@ -11,6 +11,41 @@ import (
 	"github.com/wneessen/certcheck"
 )
 
+// main is the entry point for the certificate checking tool.
+//
+// This function parses command-line flags, validates inputs, and performs a certificate check based on
+// the provided configuration. It evaluates the certificate's expiration against warning and critical thresholds
+// and reports the result with appropriate severity.
+//
+// Supported Flags:
+//
+//	-h: Hostname of the server to check (required).
+//	-p: Port to connect to (default: 443).
+//	-w: Warning threshold in days for certificate expiration (default: 5).
+//	-c: Critical threshold in days for certificate expiration (default: 1).
+//	-s: STARTTLS protocol to use (optional: "ftp", "imap", "smtp").
+//	-t: Connection timeout (default: inherited from config).
+//	-i: DNS lookup timeout (default: inherited from config).
+//	-r: Number of DNS retries (default: 3).
+//	-m: Verify the certificate against the hostname (default: false).
+//	-n: Name of the certificate to verify (default: hostname).
+//
+// Steps:
+//  1. Parse and validate command-line flags.
+//  2. Create a certificate checker configuration.
+//  3. Perform a certificate check using the checker.
+//  4. Evaluate the certificate's validity against thresholds and report results.
+//  5. Print metrics and exit with an appropriate status code.
+//
+// Outputs:
+//   - "OK": Certificate is valid beyond the warning threshold.
+//   - "WARNING": Certificate is approaching expiration (within the warning threshold).
+//   - "CRITICAL": Certificate is near expiration or already expired (within the critical threshold).
+//
+// Exit Codes:
+//   - 0: OK
+//   - 1: WARNING
+//   - 2: CRITICAL or invalid arguments.
 func main() {
 	var certname, hostname, starttls string
 	var crit, warn uint
@@ -105,6 +140,18 @@ func main() {
 	os.Exit(0)
 }
 
+// metrics formats and returns performance metrics as a human-readable string.
+//
+// This function constructs a string representation of the metrics captured during the certificate check,
+// including DNS lookup time, connection time, TLS initialization time, and TLS handshake time.
+//
+// Parameters:
+//   - metrics: A pointer to a certcheck.Metrics struct containing the recorded metrics.
+//
+// Returns:
+//   - A string representing the performance metrics in the format:
+//     "(DNS lookup: Xs, Connect time: Ys, TLS init: Zs, TLS handshake: Ws)"
+//     If a metric is zero, it is omitted from the string.
 func metrics(metrics *certcheck.Metrics) string {
 	var builder strings.Builder
 	builder.WriteString("(")
@@ -125,6 +172,21 @@ func metrics(metrics *certcheck.Metrics) string {
 	return strings.TrimSuffix(builder.String(), ", ") + ")"
 }
 
+// fail handles error reporting and exits the program with an appropriate status code.
+//
+// This function prints an error message and the associated performance metrics based on the severity
+// of the certificate check results. It exits with:
+//   - Status code 1 for warnings.
+//   - Status code 2 for critical issues.
+//
+// Parameters:
+//   - err: The error that occurred during the certificate check.
+//   - results: The certcheck.Result struct containing the severity and metrics of the check.
+//
+// Behavior:
+//   - Prints a message in the format "WARNING: <error> <metrics>" for warnings.
+//   - Prints a message in the format "CRITICAL: <error> <metrics>" for critical issues.
+//   - Exits the program with the corresponding status code.
 func fail(err error, results certcheck.Result) {
 	switch results.Severity {
 	case certcheck.SeverityWarning:
@@ -137,25 +199,35 @@ func fail(err error, results certcheck.Result) {
 	}
 }
 
-// usage is used by the flag package to display the CLI usage message
+// usage prints the usage information for the checkcert tool.
+//
+// This function provides detailed instructions on how to use the checkcert tool, including the
+// available flags and their descriptions. It also mentions default values for optional parameters.
+//
+// The usage output includes:
+//   - A description of the tool and its purpose.
+//   - The required and optional flags with their explanations.
+//   - Supported STARTTLS protocols and default values for various parameters.
+//
+// The usage message is printed to stderr.
 func usage() {
 	const usage = `checkcert - a Nagios plugin to check certificate validity
-Copyright (c) 2021-2025 by Winni Neessen (MIT licensed)
+Copyright (c) 2021-2025 by Winni Neessen
 
 Usage: checkcert -h <hostname> -c <critical> -w <warning> 
                  [-p <port> -s <starttls proto> -t <timeout> -i <dnstimeout> -r <retries> -m -n <certname>]"
 
 Flags:
-	-h <HOSTNAME>			Hostname to connect to
-	-c <CRITICAL DAYS>		Number of days left of the certificate validity that triggers a CRITICAL alert
-	-w <WARNING DAYS>		Number of days left of the certificate validity that triggers a WARANING alert
-	-p <PORT>				Port to connect to (Default: 443)
-	-s <STARTTLS PROTOCOL>	Use STARTTLS protocol instead of HTTPS (Supported protocols: smtp, imap)
-	-t <CONNECTION TIMEOUT>	Timeout for connecting to the server (Default: 5s)
-	-i <DNS TIMEOUT>		Timeout for resolving the IPs of the hostname (Default: 5s)
-	-r <DNS RETRIES>		Number of re-tries if a DNS resolution fails (Default: 3)
-	-m						Verify that certificate name matches the certificate
-	-n <CERTIFICATE NAME>	Check for a different certificate name then the hostname (Default: <HOSTNAME>)`
+    -h <HOSTNAME>              Hostname to connect to
+    -c <CRITICAL DAYS>         Number of days left of the certificate validity that triggers a CRITICAL alert
+    -w <WARNING DAYS>          Number of days left of the certificate validity that triggers a WARANING alert
+    -p <PORT>                  Port to connect to (Default: 443)
+    -s <STARTTLS PROTOCOL>     Use STARTTLS protocol instead of HTTPS (Supported protocols: smtp, imap)
+    -t <CONNECTION TIMEOUT>    Timeout for connecting to the server (Default: 5s)
+    -i <DNS TIMEOUT>           Timeout for resolving the IPs of the hostname (Default: 5s)
+    -r <DNS RETRIES>           Number of re-tries if a DNS resolution fails (Default: 3)
+    -m                         Verify that certificate name matches the certificate
+    -n <CERTIFICATE NAME>      Check for a different certificate name then the hostname (Default: <HOSTNAME>)`
 
 	_, _ = os.Stderr.WriteString(usage + "\n\n")
 }
