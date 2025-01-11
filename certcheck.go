@@ -134,6 +134,10 @@ func New(config Config) *Checker {
 //   - A Result struct containing the certificate's expiration time, performance metrics, and severity level.
 //   - An error if any step in the process (DNS lookup, connection, or certificate validation) fails.
 func (c *Checker) Check(ctx context.Context) (Result, error) {
+	if c.Config.Hostname == "" {
+		return Result{}, fmt.Errorf("hostname is required")
+	}
+
 	var addrs []net.IP
 	var dnsFails uint = 1
 	result := Result{Metrics: &Metrics{}}
