@@ -232,6 +232,33 @@ func TestCheck(t *testing.T) {
 	})
 }
 
+func TestChecker_lookupHost(t *testing.T) {
+	t.Run("lookupHost with valid hostname", func(t *testing.T) {
+		config := Config{Hostname: "www.google.com"}
+		metrics := &Metrics{}
+		checker := New(config)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		_, err := checker.lookupHost(ctx, metrics)
+		if err != nil {
+			t.Fatalf("failed to lookup host: %s", err)
+		}
+	})
+	t.Run("lookupHost with invalid hostname", func(t *testing.T) {
+		config := Config{Hostname: "invalid.tld"}
+		metrics := &Metrics{}
+		checker := New(config)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		_, err := checker.lookupHost(ctx, metrics)
+		if err == nil {
+			t.Fatal("dns lookup with invalid host should fail")
+		}
+	})
+}
+
 // defaultChecker is a test helper method that returns a Checker and a matching IP address for
 // the configured hostname
 func defaultChecker(t *testing.T, port uint) *Checker {
