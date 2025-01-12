@@ -18,3 +18,13 @@ enable = ["stylecheck", "whitespace", "containedctx", "contextcheck", "decorder"
 linters = ["gosec"]
 path = "tls.go"
 text = "G402:"
+
+[[issues.exclude-rules]]
+linters = ["gosec"]
+path = "certcheck_test.go"
+text = "G402:"
+
+[[issues.exclude-rules]]
+linters = ["staticcheck"]
+path = "certcheck_test.go"
+text = "SA1012:"
