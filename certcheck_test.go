@@ -83,13 +83,15 @@ func TestNew(t *testing.T) {
 }
 
 func TestCheck(t *testing.T) {
-	t.Run("Check with valid hostname", func(t *testing.T) {
-		props, err := testServerProps(t, false, 0)
+	t.Run("Check with valid hostname and certificate", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		props, err := testServerProps(t, false, nil)
 		if err != nil {
 			t.Fatalf("failed to get test server properties: %s", err)
 		}
 		go func() {
-			if err := testHTTPserver(t, props); err != nil {
+			if err := testHTTPserver(ctx, t, props); err != nil {
 				t.Errorf("failed to start test HTTP server: %s", err)
 				return
 			}
@@ -98,6 +100,93 @@ func TestCheck(t *testing.T) {
 
 		checker := defaultChecker(t, props.ListenPort)
 		result, err := checker.Check(context.Background())
+		if err != nil {
+			t.Fatalf("failed to check certificate: %s", err)
+		}
+		if !result.Addresses[0].IsLoopback() {
+			t.Errorf("expected IP address to be loopback, got %s", result.Addresses[0])
+		}
+	})
+	t.Run("Check with valid hostname and certificate via SMTP STARTTLS", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+		defer cancel()
+		props, err := testServerProps(t, false, nil)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		props.TLSProto = TLSProtoSMTP
+		props.NoTLS = true
+		go func() {
+			if err := testSTARTTLSServer(ctx, t, props); err != nil {
+				t.Errorf("failed to start test STARTTLS server: %s", err)
+				return
+			}
+		}()
+		time.Sleep(time.Millisecond * 30)
+
+		ctxCheck, cancelCheck := context.WithCancel(ctx)
+		defer cancelCheck()
+		checker := defaultChecker(t, props.ListenPort)
+		checker.Config.StartTLS = TLSProtoSMTP
+		result, err := checker.Check(ctxCheck)
+		if err != nil {
+			t.Fatalf("failed to check certificate: %s", err)
+		}
+		if !result.Addresses[0].IsLoopback() {
+			t.Errorf("expected IP address to be loopback, got %s", result.Addresses[0])
+		}
+	})
+	t.Run("Check with valid hostname and certificate via FTP STARTTLS", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+		defer cancel()
+		props, err := testServerProps(t, false, nil)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		props.TLSProto = TLSProtoFTP
+		props.NoTLS = true
+		go func() {
+			if err := testSTARTTLSServer(ctx, t, props); err != nil {
+				t.Errorf("failed to start test STARTTLS server: %s", err)
+				return
+			}
+		}()
+		time.Sleep(time.Millisecond * 30)
+
+		ctxCheck, cancelCheck := context.WithCancel(ctx)
+		defer cancelCheck()
+		checker := defaultChecker(t, props.ListenPort)
+		checker.Config.StartTLS = TLSProtoFTP
+		result, err := checker.Check(ctxCheck)
+		if err != nil {
+			t.Fatalf("failed to check certificate: %s", err)
+		}
+		if !result.Addresses[0].IsLoopback() {
+			t.Errorf("expected IP address to be loopback, got %s", result.Addresses[0])
+		}
+	})
+	t.Run("Check with valid hostname and certificate via IMAP STARTTLS", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+		defer cancel()
+		props, err := testServerProps(t, false, nil)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		props.TLSProto = TLSProtoIMAP
+		props.NoTLS = true
+		go func() {
+			if err := testSTARTTLSServer(ctx, t, props); err != nil {
+				t.Errorf("failed to start test STARTTLS server: %s", err)
+				return
+			}
+		}()
+		time.Sleep(time.Millisecond * 30)
+
+		ctxCheck, cancelCheck := context.WithCancel(ctx)
+		defer cancelCheck()
+		checker := defaultChecker(t, props.ListenPort)
+		checker.Config.StartTLS = TLSProtoIMAP
+		result, err := checker.Check(ctxCheck)
 		if err != nil {
 			t.Fatalf("failed to check certificate: %s", err)
 		}
@@ -153,12 +242,13 @@ func defaultChecker(t *testing.T, port uint) *Checker {
 }
 
 // genTestCert is a test helper method to generate certificates for test servers
-func genTestCert(t *testing.T, validFor time.Duration, cn string, ca bool) ([]byte, []byte, error) {
+func genTestCert(t *testing.T, validTo *time.Time, cn string, ca bool) ([]byte, []byte, error) {
 	t.Helper()
 
 	// If no validity is given, we generate for one day
-	if validFor == 0 {
-		validFor = time.Hour * 24
+	if validTo == nil {
+		day := time.Now().Add(time.Hour * 24)
+		validTo = &day
 	}
 
 	// Generate private key
@@ -169,7 +259,7 @@ func genTestCert(t *testing.T, validFor time.Duration, cn string, ca bool) ([]by
 
 	// Set validity dates
 	notBefore := time.Now()
-	notAfter := notBefore.Add(validFor)
+	notAfter := *validTo
 
 	// Generate random serial
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
@@ -228,12 +318,13 @@ func genTestCert(t *testing.T, validFor time.Duration, cn string, ca bool) ([]by
 	return public.Bytes(), private.Bytes(), nil
 }
 
-func testServerProps(t *testing.T, notls bool, validfor time.Duration) (*serverProps, error) {
+func testServerProps(t *testing.T, notls bool, validTo *time.Time) (*serverProps, error) {
 	t.Helper()
-	public, private, err := genTestCert(t, validfor, "127.0.0.1,localhost", false)
+	public, private, err := genTestCert(t, validTo, "127.0.0.1,localhost", false)
 	if err != nil {
 		return nil, fmt.Errorf("unable to provide testserver config: %w", err)
 	}
+	PortAdder.Add(1)
 	serverPort := uint(TestServerPortBase + PortAdder.Load())
 	return &serverProps{
 		ListenPort: serverPort,
@@ -252,12 +343,11 @@ type serverProps struct {
 	TLSProto    STARTTLSProto
 	ServerCert  []byte
 	ServerKey   []byte
+	tlsConfig   *tls.Config
+	tlsSwitched bool
 }
 
-// simpleSMTPServer starts a simple TCP server that resonds to SMTP commands.
-// The provided featureSet represents in what the server responds to EHLO command
-// failReset controls if a RSET succeeds
-func testserver(ctx context.Context, t *testing.T, props *serverProps) error {
+func testSTARTTLSServer(ctx context.Context, t *testing.T, props *serverProps) error {
 	t.Helper()
 	if props == nil {
 		return fmt.Errorf("no server properties provided")
@@ -268,16 +358,17 @@ func testserver(ctx context.Context, t *testing.T, props *serverProps) error {
 		return fmt.Errorf("failed to read TLS keypair: %w", err)
 	}
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{keypair}}
+	props.tlsConfig = tlsConfig
 
 	var listener net.Listener
-	listenAddr := net.JoinHostPort("localhost", fmt.Sprintf("%d", props.ListenPort))
-	if props.NoTLS {
-		listener, err = net.Listen("tcp", listenAddr)
-	} else {
-		listener, err = tls.Listen("tcp", listenAddr, tlsConfig)
-	}
+	listenAddr := net.JoinHostPort("", fmt.Sprintf("%d", props.ListenPort))
+	listenConfig := net.ListenConfig{}
+	listener, err = listenConfig.Listen(ctx, "tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("unable to listen on %q: %w (TLS: %t)", listenAddr, err, !props.NoTLS)
+	}
+	if !props.NoTLS {
+		listener = tls.NewListener(listener, tlsConfig)
 	}
 	defer func() {
 		if err := listener.Close(); err != nil {
@@ -298,12 +389,21 @@ func testserver(ctx context.Context, t *testing.T, props *serverProps) error {
 				}
 				return fmt.Errorf("unable to accept conn: %w", err)
 			}
-			handleTestServerConnection(conn, t, props)
+			switch props.TLSProto {
+			case TLSProtoSMTP:
+				handleSMTP(conn, t, props)
+			case TLSProtoFTP:
+				handleFTP(conn, t, props)
+			case TLSProtoIMAP:
+				handleIMAP(conn, t, props)
+			default:
+				return fmt.Errorf("unsupported TLS protocol: %d", props.TLSProto)
+			}
 		}
 	}
 }
 
-func handleTestServerConnection(conn net.Conn, t *testing.T, props *serverProps) {
+func handleSMTP(conn net.Conn, t *testing.T, props *serverProps) {
 	t.Helper()
 
 	reader := bufio.NewReader(conn)
@@ -323,18 +423,159 @@ func handleTestServerConnection(conn net.Conn, t *testing.T, props *serverProps)
 		}
 		_ = writer.Flush()
 	}
+	if !props.tlsSwitched {
+		writeLine("220 certcheck SMTP server ESMTP")
+	}
 
-	writeLine("Cool")
 	for {
 		data, err := reader.ReadString('\n')
 		if err != nil {
 			break
 		}
-		t.Log(data)
+		time.Sleep(time.Millisecond)
+
+		data = strings.TrimSpace(data)
+		switch {
+		case strings.HasPrefix(data, "HELO"), strings.HasPrefix(data, "EHLO"):
+			writeLine("250-localhost.localdomain\r\n250-STARTTLS\r\n250 SMTPUTF8")
+			break
+		case strings.EqualFold(data, "starttls"):
+			writeLine("220 Ready to start TLS")
+			conn = tls.Server(conn, props.tlsConfig)
+			props.tlsSwitched = true
+			handleSMTP(conn, t, props)
+			return
+		case strings.EqualFold(data, "quit"):
+			writeLine("221 Bye")
+			return
+		default:
+			writeLine("500 Command not recognized")
+			return
+		}
 	}
 }
 
-func testHTTPserver(t *testing.T, props *serverProps) error {
+func handleFTP(conn net.Conn, t *testing.T, props *serverProps) {
+	t.Helper()
+
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+
+	writeLine := func(data string) {
+		_, err := writer.WriteString(data + "\r\n")
+		if err != nil {
+			t.Logf("failed to write line: %s", err)
+		}
+		if props.EchoBuffer != nil {
+			props.BufferMutex.Lock()
+			if _, berr := props.EchoBuffer.Write([]byte(data + "\r\n")); berr != nil {
+				t.Errorf("failed write to echo buffer: %s", berr)
+			}
+			props.BufferMutex.Unlock()
+		}
+		_ = writer.Flush()
+	}
+	if !props.tlsSwitched {
+		writeLine("220 certcheck FTP server")
+	}
+
+	for {
+		data, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+
+		data = strings.TrimSpace(data)
+		switch {
+		case strings.EqualFold(data, "auth tls"):
+			writeLine("234 Proceed with negotiation.")
+			conn = tls.Server(conn, props.tlsConfig)
+			props.tlsSwitched = true
+			handleFTP(conn, t, props)
+			return
+		case strings.EqualFold(data, "quit"):
+			writeLine("221 Bye")
+			return
+		default:
+			writeLine("500 Command not recognized")
+			return
+		}
+	}
+}
+
+func handleIMAP(conn net.Conn, t *testing.T, props *serverProps) {
+	t.Helper()
+
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
+
+	writeLine := func(data string) {
+		_, err := writer.WriteString(data + "\r\n")
+		if err != nil {
+			t.Logf("failed to write line: %s", err)
+		}
+		if props.EchoBuffer != nil {
+			props.BufferMutex.Lock()
+			if _, berr := props.EchoBuffer.Write([]byte(data + "\r\n")); berr != nil {
+				t.Errorf("failed write to echo buffer: %s", berr)
+			}
+			props.BufferMutex.Unlock()
+		}
+		_ = writer.Flush()
+	}
+	if !props.tlsSwitched {
+		writeLine("* OK [STARTTLS] certcheck imap")
+	}
+
+	for {
+		data, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		time.Sleep(time.Millisecond)
+		if props.EchoBuffer != nil {
+			props.BufferMutex.Lock()
+			if _, berr := props.EchoBuffer.Write([]byte(data)); berr != nil {
+				t.Errorf("failed write to echo buffer: %s", berr)
+			}
+			props.BufferMutex.Unlock()
+		}
+
+		data = strings.TrimSpace(data)
+		words := strings.Split(data, " ")
+		if len(words) < 2 {
+			writeLine("* BYE command not recognized")
+			return
+		}
+		if !strings.HasPrefix(words[0], "A00") {
+			writeLine("* BYE unexpected command id")
+			return
+		}
+		cmd := words[1]
+
+		switch {
+		case strings.EqualFold(cmd, "starttls"):
+			writeLine(words[0] + " OK STARTTLS done")
+			conn = tls.Server(conn, props.tlsConfig)
+			props.tlsSwitched = true
+			handleIMAP(conn, t, props)
+			return
+		case strings.EqualFold(cmd, "capability"):
+			writeLine("* CAPABILITY STARTTLS")
+			writeLine("A001 OK CAPABILITY done")
+			break
+		case strings.EqualFold(cmd, "logout"):
+			writeLine("* BYE")
+			return
+		default:
+			writeLine("* BYE please try again speaking imap")
+			return
+		}
+	}
+}
+
+func testHTTPserver(ctx context.Context, t *testing.T, props *serverProps) error {
 	t.Helper()
 	if props == nil {
 		return fmt.Errorf("no server properties provided")
@@ -371,5 +612,27 @@ func testHTTPserver(t *testing.T, props *serverProps) error {
 	}
 
 	listenAddr := net.JoinHostPort("", fmt.Sprintf("%d", props.ListenPort))
-	return http.ListenAndServeTLS(listenAddr, certfile.Name(), keyfile.Name(), handler)
+	serverErrors := make(chan error, 1)
+
+	server := &http.Server{
+		Addr:    listenAddr,
+		Handler: handler,
+	}
+
+	go func() {
+		serverErrors <- server.ListenAndServeTLS(certfile.Name(), keyfile.Name())
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			t.Logf("Graceful shutdown failed: %v", err)
+		}
+	case err := <-serverErrors:
+		return fmt.Errorf("failed to start HTTP server: %w", err)
+	}
+	return nil
 }
