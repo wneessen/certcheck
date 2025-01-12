@@ -265,7 +265,7 @@ func genTestCert(t *testing.T, validTo *time.Time, cn string, ca bool) ([]byte, 
 	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to generate serial number: %s", err)
+		return nil, nil, fmt.Errorf("failed to generate serial number: %w", err)
 	}
 
 	// Generate certificate template
@@ -299,7 +299,7 @@ func genTestCert(t *testing.T, validTo *time.Time, cn string, ca bool) ([]byte, 
 	// Generate certifcate
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, privKey.Public(), privKey)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create certificate: %s", err)
+		return nil, nil, fmt.Errorf("failed to create certificate: %w", err)
 	}
 
 	public := bytes.NewBuffer(nil)
@@ -438,7 +438,6 @@ func handleSMTP(conn net.Conn, t *testing.T, props *serverProps) {
 		switch {
 		case strings.HasPrefix(data, "HELO"), strings.HasPrefix(data, "EHLO"):
 			writeLine("250-localhost.localdomain\r\n250-STARTTLS\r\n250 SMTPUTF8")
-			break
 		case strings.EqualFold(data, "starttls"):
 			writeLine("220 Ready to start TLS")
 			conn = tls.Server(conn, props.tlsConfig)
@@ -564,7 +563,6 @@ func handleIMAP(conn net.Conn, t *testing.T, props *serverProps) {
 		case strings.EqualFold(cmd, "capability"):
 			writeLine("* CAPABILITY STARTTLS")
 			writeLine("A001 OK CAPABILITY done")
-			break
 		case strings.EqualFold(cmd, "logout"):
 			writeLine("* BYE")
 			return
@@ -615,8 +613,9 @@ func testHTTPserver(ctx context.Context, t *testing.T, props *serverProps) error
 	serverErrors := make(chan error, 1)
 
 	server := &http.Server{
-		Addr:    listenAddr,
-		Handler: handler,
+		Addr:              listenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 60 * time.Second,
 	}
 
 	go func() {
@@ -625,7 +624,7 @@ func testHTTPserver(ctx context.Context, t *testing.T, props *serverProps) error
 
 	select {
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
