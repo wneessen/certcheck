@@ -162,10 +162,6 @@ func (c *Checker) Check(ctx context.Context) (Result, error) {
 		}
 		break
 	}
-	if len(addrs) == 0 {
-		result.Severity = SeverityCritical
-		return result, fmt.Errorf("no IP address found for hostname %s", c.Config.Hostname)
-	}
 	addr := addrs[0]
 	result.Addresses = addrs
 
