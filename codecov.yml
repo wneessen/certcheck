@@ -17,6 +17,8 @@ coverage:
         base: auto
         if_ci_failed: error
         threshold: 2%
+ignore:
+  - "cmd/"
 
 comment:
   require_changes: true
