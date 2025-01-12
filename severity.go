@@ -11,11 +11,8 @@ type Severity int
 
 // Severity levels for the result of a certificate check.
 const (
-	// SeverityOK indicates that the check passed with no issues.
-	SeverityOK Severity = iota
-
 	// SeverityWarning indicates that the check passed with some warnings or potential issues.
-	SeverityWarning
+	SeverityWarning = iota + 1
 
 	// SeverityCritical indicates that the check failed due to critical issues.
 	SeverityCritical
