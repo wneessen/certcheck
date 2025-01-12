@@ -16,13 +16,11 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,12 +97,39 @@ func TestCheck(t *testing.T) {
 		time.Sleep(time.Millisecond * 30)
 
 		checker := defaultChecker(t, props.ListenPort)
+		checker.Config.VerifyCert = true
 		result, err := checker.Check(context.Background())
 		if err != nil {
 			t.Fatalf("failed to check certificate: %s", err)
 		}
 		if !result.Addresses[0].IsLoopback() {
 			t.Errorf("expected IP address to be loopback, got %s", result.Addresses[0])
+		}
+	})
+	t.Run("Check fails with invalid certname", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		props, err := testServerProps(t, false, nil)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		go func() {
+			if err := testHTTPserver(ctx, t, props); err != nil {
+				t.Errorf("failed to start test HTTP server: %s", err)
+				return
+			}
+		}()
+		time.Sleep(time.Millisecond * 30)
+
+		checker := defaultChecker(t, props.ListenPort)
+		checker.Config.VerifyCert = true
+		checker.Config.Certname = "invalid"
+		result, err := checker.Check(context.Background())
+		if err == nil {
+			t.Fatal("expected check to fail with invalid certname")
+		}
+		if result.Severity != SeverityCritical {
+			t.Errorf("expected severity to be critical, got %d", result.Severity)
 		}
 	})
 	t.Run("Check with valid hostname and certificate via SMTP STARTTLS", func(t *testing.T) {
@@ -192,6 +217,36 @@ func TestCheck(t *testing.T) {
 		}
 		if !result.Addresses[0].IsLoopback() {
 			t.Errorf("expected IP address to be loopback, got %s", result.Addresses[0])
+		}
+	})
+	t.Run("Check with valid hostname and certificate via SMTP STARTTLS fails on connect", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*1)
+		defer cancel()
+		props, err := testServerProps(t, false, nil)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		props.TLSProto = TLSProtoSMTP
+		props.NoTLS = true
+		props.FailOnConnect = true
+		go func() {
+			if err := testSTARTTLSServer(ctx, t, props); err != nil {
+				t.Errorf("failed to start test STARTTLS server: %s", err)
+				return
+			}
+		}()
+		time.Sleep(time.Millisecond * 30)
+
+		ctxCheck, cancelCheck := context.WithCancel(ctx)
+		defer cancelCheck()
+		checker := defaultChecker(t, props.ListenPort)
+		checker.Config.StartTLS = TLSProtoSMTP
+		result, err := checker.Check(ctxCheck)
+		if err == nil {
+			t.Fatal("check was expected to fail on connect")
+		}
+		if result.Severity != SeverityCritical {
+			t.Errorf("expected severity to be critical, got %d", result.Severity)
 		}
 	})
 	t.Run("Check with empty hostname", func(t *testing.T) {
@@ -363,15 +418,14 @@ func testServerProps(t *testing.T, notls bool, validTo *time.Time) (*serverProps
 
 // serverProps represents the configuration properties for the SMTP server.
 type serverProps struct {
-	BufferMutex sync.RWMutex
-	EchoBuffer  io.Writer
-	ListenPort  uint
-	NoTLS       bool
-	TLSProto    STARTTLSProto
-	ServerCert  []byte
-	ServerKey   []byte
-	tlsConfig   *tls.Config
-	tlsSwitched bool
+	FailOnConnect bool
+	ListenPort    uint
+	NoTLS         bool
+	ServerCert    []byte
+	ServerKey     []byte
+	TLSProto      STARTTLSProto
+	tlsConfig     *tls.Config
+	tlsSwitched   bool
 }
 
 func testSTARTTLSServer(ctx context.Context, t *testing.T, props *serverProps) error {
@@ -441,14 +495,11 @@ func handleSMTP(conn net.Conn, t *testing.T, props *serverProps) {
 		if err != nil {
 			t.Logf("failed to write line: %s", err)
 		}
-		if props.EchoBuffer != nil {
-			props.BufferMutex.Lock()
-			if _, berr := props.EchoBuffer.Write([]byte(data + "\r\n")); berr != nil {
-				t.Errorf("failed write to echo buffer: %s", berr)
-			}
-			props.BufferMutex.Unlock()
-		}
 		_ = writer.Flush()
+	}
+	if props.FailOnConnect {
+		writeLine("500 Unexpected error")
+		return
 	}
 	if !props.tlsSwitched {
 		writeLine("220 certcheck SMTP server ESMTP")
@@ -492,14 +543,11 @@ func handleFTP(conn net.Conn, t *testing.T, props *serverProps) {
 		if err != nil {
 			t.Logf("failed to write line: %s", err)
 		}
-		if props.EchoBuffer != nil {
-			props.BufferMutex.Lock()
-			if _, berr := props.EchoBuffer.Write([]byte(data + "\r\n")); berr != nil {
-				t.Errorf("failed write to echo buffer: %s", berr)
-			}
-			props.BufferMutex.Unlock()
-		}
 		_ = writer.Flush()
+	}
+	if props.FailOnConnect {
+		writeLine("500 Unexpected error")
+		return
 	}
 	if !props.tlsSwitched {
 		writeLine("220 certcheck FTP server")
@@ -541,14 +589,11 @@ func handleIMAP(conn net.Conn, t *testing.T, props *serverProps) {
 		if err != nil {
 			t.Logf("failed to write line: %s", err)
 		}
-		if props.EchoBuffer != nil {
-			props.BufferMutex.Lock()
-			if _, berr := props.EchoBuffer.Write([]byte(data + "\r\n")); berr != nil {
-				t.Errorf("failed write to echo buffer: %s", berr)
-			}
-			props.BufferMutex.Unlock()
-		}
 		_ = writer.Flush()
+	}
+	if props.FailOnConnect {
+		writeLine("* BYE unexpected error")
+		return
 	}
 	if !props.tlsSwitched {
 		writeLine("* OK [STARTTLS] certcheck imap")
@@ -560,13 +605,6 @@ func handleIMAP(conn net.Conn, t *testing.T, props *serverProps) {
 			break
 		}
 		time.Sleep(time.Millisecond)
-		if props.EchoBuffer != nil {
-			props.BufferMutex.Lock()
-			if _, berr := props.EchoBuffer.Write([]byte(data)); berr != nil {
-				t.Errorf("failed write to echo buffer: %s", berr)
-			}
-			props.BufferMutex.Unlock()
-		}
 
 		data = strings.TrimSpace(data)
 		words := strings.Split(data, " ")
