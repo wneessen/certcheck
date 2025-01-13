@@ -22,7 +22,7 @@ builds:
       - arm64
       - amd64
     main: ./cmd/nagios
-    binary: checkcert
+    binary: certcheck
     ldflags:
       - -w -s -extldflags "-static"
 
