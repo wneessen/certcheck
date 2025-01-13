@@ -314,6 +314,78 @@ func TestChecker_lookupHost(t *testing.T) {
 	})
 }
 
+func TestChecker_checkTLS(t *testing.T) {
+	t.Run("checkTLS on webserver with valid certificate", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		validTo := time.Now().Add(time.Minute)
+		props, err := testServerProps(t, false, &validTo)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		go func() {
+			if err := testHTTPserver(ctx, t, props); err != nil {
+				t.Errorf("failed to start test HTTP server: %s", err)
+				return
+			}
+		}()
+		time.Sleep(time.Millisecond * 30)
+
+		ctxCheck, cancelCheck := context.WithCancel(ctx)
+		defer cancelCheck()
+
+		metrics := &Metrics{}
+		checker := defaultChecker(t, props.ListenPort)
+		addrs, err := checker.lookupHost(ctxCheck, metrics)
+		if err != nil {
+			t.Fatalf("failed to lookup host: %s", err)
+		}
+		if len(addrs) < 1 {
+			t.Fatalf("expected at least one address, got %d", len(addrs))
+		}
+		ipAddr := addrs[0]
+		cert, err := checker.checkTLS(ctxCheck, ipAddr, metrics)
+		if err != nil {
+			t.Fatalf("failed to check certificate: %s", err)
+		}
+		if cert == nil {
+			t.Error("expected certificate to be returned")
+		}
+		if cert.Subject.String() != "O=ACME Co." {
+			t.Errorf("expected subject to be ACME Co., got %s", cert.Subject.String())
+		}
+		if !cert.NotBefore.Before(time.Now()) {
+			t.Errorf("expected certificate to be valid, got notBefore: %s", cert.NotBefore.String())
+		}
+		if !cert.NotAfter.After(time.Now()) {
+			t.Errorf("expected certificate to be valid, got notAfter: %s", cert.NotAfter.String())
+		}
+	})
+	t.Run("checkTLS fails on not running server", func(t *testing.T) {
+		props, err := testServerProps(t, false, nil)
+		if err != nil {
+			t.Fatalf("failed to get test server properties: %s", err)
+		}
+		metrics := &Metrics{}
+		checker := defaultChecker(t, props.ListenPort)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		addrs, err := checker.lookupHost(ctx, metrics)
+		if err != nil {
+			t.Fatalf("failed to lookup host: %s", err)
+		}
+		if len(addrs) < 1 {
+			t.Fatalf("expected at least one address, got %d", len(addrs))
+		}
+		ipAddr := addrs[0]
+		_, err = checker.checkTLS(ctx, ipAddr, metrics)
+		if err == nil {
+			t.Fatal("checkTLS should fail on not running server")
+		}
+	})
+}
+
 // defaultChecker is a test helper method that returns a Checker and a matching IP address for
 // the configured hostname
 func defaultChecker(t *testing.T, port uint) *Checker {
@@ -402,7 +474,7 @@ func genTestCert(t *testing.T, validTo *time.Time, cn string, ca bool) ([]byte, 
 
 func testServerProps(t *testing.T, notls bool, validTo *time.Time) (*serverProps, error) {
 	t.Helper()
-	public, private, err := genTestCert(t, validTo, "127.0.0.1,localhost", false)
+	public, private, err := genTestCert(t, validTo, "127.0.0.1,::1,localhost", false)
 	if err != nil {
 		return nil, fmt.Errorf("unable to provide testserver config: %w", err)
 	}
